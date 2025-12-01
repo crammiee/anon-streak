@@ -1,12 +1,15 @@
 "use client"
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function ChatInterface() {
-  const [messages, setMessages] = useState([]);
-  const [inputMessage, setInputMessage] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const messagesEndRef = useRef(null);
+    const router = useRouter();
+
+    const [messages, setMessages] = useState([]);
+    const [inputMessage, setInputMessage] = useState('');
+    const [isTyping, setIsTyping] = useState(false);
+    const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -17,6 +20,7 @@ export default function ChatInterface() {
   }, [messages]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([
       {
         id: 1,
@@ -78,7 +82,7 @@ export default function ChatInterface() {
 
   const handleLeaveChat = () => {
     if (confirm('Are you sure you want to leave this chat?')) {
-      alert('Leaving chat... (will navigate to matching page)');
+      router.push('/');
     }
   };
 

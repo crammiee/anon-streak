@@ -1,10 +1,13 @@
 "use client"
 
+import { useRouter } from "next/navigation";
+
 export default function LandingPage() {
-  const handleStartChatting = () => {
-    // TODO: Navigate to matching page
-    alert('Starting chat... (will navigate to /matching)');
-  };
+    const router = useRouter();
+
+    const handleStartChatting = () => {
+        router.push("/matching");
+    };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-zinc-950 text-white px-6">

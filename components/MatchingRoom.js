@@ -1,11 +1,13 @@
 "use client"
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function MatchingRoom() {
-  const [dots, setDots] = useState('');
-  const [status, setStatus] = useState('Looking for someone to chat with');
-  const [searchTime, setSearchTime] = useState(0);
+    const router = useRouter();
+    const [dots, setDots] = useState('');
+    const [status, setStatus] = useState('Looking for someone to chat with');
+    const [searchTime, setSearchTime] = useState(0);
 
   // Animated dots effect
   useEffect(() => {
@@ -32,18 +34,16 @@ export default function MatchingRoom() {
     const timeout = setTimeout(() => {
       setStatus('Match found!');
       setTimeout(() => {
-        // TODO: Navigate to chat page
-        alert('Connecting to chat... (will navigate to /chat)');
+        router.push('/chat');
       }, 1000);
     }, matchTime);
 
     return () => clearTimeout(timeout);
-  }, []);
+  }, [router]);
 
   const handleCancel = () => {
     if (confirm('Are you sure you want to cancel?')) {
-      // TODO: Navigate back to landing page
-      alert('Cancelled. Going back... (will navigate to /)');
+        router.push('/');
     }
   };
 
