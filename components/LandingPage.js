@@ -11,7 +11,7 @@ export default function LandingPage() {
       {/* Logo/Brand */}
       <div className="text-center mb-12">
         <div className="flex items-center justify-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center">
+          <div className="w-12 h-12 bg-linear-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center">
             <svg 
               className="w-7 h-7 text-white" 
               fill="none" 
@@ -26,7 +26,7 @@ export default function LandingPage() {
               />
             </svg>
           </div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+          <h1 className="text-4xl font-bold bg-linear-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
             AnonStreak
           </h1>
         </div>
