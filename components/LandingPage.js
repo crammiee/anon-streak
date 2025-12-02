@@ -6,6 +6,7 @@ import { createAnonymousUser, joinWaitingQueue } from "@/lib/utils";
 
 export default function LandingPage() {
     const router = useRouter();
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [isLoading, setIsLoading] = useState(false);
 
     const handleStartChatting = async () => {
