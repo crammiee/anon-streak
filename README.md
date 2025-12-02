@@ -11,3 +11,4 @@ If two users enjoy chatting, they can choose to start a streak, allowing them to
 - Streaks let two users reconnect daily without revealing identities
 - Ephemeral messaging — everything auto-deletes
 - Lightweight, safe, privacy-centric social interaction
+gi
