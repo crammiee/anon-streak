@@ -40,21 +40,78 @@ export default function MatchingRoom() {
     return () => clearInterval(timer);
   }, []);
 
-  // real matching logic - poll for matches
+  // new matching logic: listen for when we get matched (our queue entry is removed)
   useEffect(() => {
     if (!userId) return;
 
     let isActive = true;
+    let hasMatched = false;
 
+    //subscribe to own queue entry being deleted
+    const queueChannel = supabase
+      .channel('queue-${userId}')
+      .on(
+        'postgres_changes',
+        { event: 'DELETE',
+          schema: 'public', 
+          table: 'waiting_queue', 
+          filter: `user_id=eq.${userId}`
+        },
+        async (payload) => {
+          if (hasMatched || !isActive) return;
+          hasMatched = true;
+
+          console.log('Matched! Payload:', payload);
+
+          //small delay to let other user create session
+          await new Promise(res => setTimeout(res, 500));
+
+          //find our chat session
+          const { data: sessions, error } = await supabase
+            .from('chat_sessions')
+            .select('*')
+            .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+          
+          if (error) {
+            console.error('Error fetching chat session:', error);
+            return;
+          }
+
+          if (sessions && sessions.length > 0) {
+            const session = sessions[0];
+            const partnerId = session.user1_id === userId ? session.user2_id : session.user1_id;
+
+            setStatus('Match found! Setting up chat...');
+
+            //store session data
+            localStorage.setItem('sessionId', session.id);
+            localStorage.setItem('partnerId', partnerId);
+
+            //navigate to chat
+            setTimeout(() => {
+              if (isActive) {
+                router.push('/chat');
+              }
+            }, 1000);
+          }
+        }
+      )
+      .subscribe();
+    
+    // also try to match with others (polling as backup)
     const attemptMatch = async () => {
+      if (hasMatched) return;
+
       try {
         // Try to find a match
         const match = await findMatch(userId);
 
         console.log('Match result:', match);
 
-        if (match && isActive) {
+        if (match && isActive && !hasMatched) {
           //found a match
+          hasMatched = true;
+          console.log('found match via plotting:', match.user_id);
           setStatus('Match found! Setting up chat...');
 
           //create chat session 
@@ -82,6 +139,7 @@ export default function MatchingRoom() {
     return () => {
       isActive = false;
       clearInterval(pollInterval);
+      supabase.removeChannel(queueChannel);
     };
   }, [userId, router]);
 
