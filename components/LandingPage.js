@@ -15,6 +15,7 @@ export default function LandingPage() {
         //check if user already exists in localStorage
         let userId = localStorage.getItem("userId");
 
+        //if not, create anonymous user
         if (!userId) {
           //create anonymous user
           const user = await createAnonymousUser();
@@ -23,7 +24,7 @@ export default function LandingPage() {
         }
         
         //join waiting queue
-        await joinWaitingQueue(user.id);
+        await joinWaitingQueue(userId);
 
         //redirect to waiting page
         router.push('/matching');

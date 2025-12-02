@@ -2,12 +2,25 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { findMatch, createChatSession, supabase } from '@/lib/utils';
 
 export default function MatchingRoom() {
-    const router = useRouter();
-    const [dots, setDots] = useState('');
-    const [status, setStatus] = useState('Looking for someone to chat with');
-    const [searchTime, setSearchTime] = useState(0);
+  const router = useRouter();
+  const [dots, setDots] = useState('');
+  const [status, setStatus] = useState('Looking for someone to chat with');
+  const [searchTime, setSearchTime] = useState(0);
+  const [userId, setUserId] = useState(null);
+
+  useEffect(() => {
+    // get userid from localStorage
+    const storedUserId = localStorage.getItem('userId');
+    if (!storedUserId) {
+      router.push('/');
+      return;
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUserId(storedUserId);
+  }, [router]);
 
   // Animated dots effect
   useEffect(() => {
@@ -27,23 +40,69 @@ export default function MatchingRoom() {
     return () => clearInterval(timer);
   }, []);
 
-  // Simulate finding a match after 3-5 seconds (for demo)
+  // real matching logic - poll for matches
   useEffect(() => {
-    const matchTime = Math.random() * 2000 + 3000; // 3-5 seconds
+    if (!userId) return;
 
-    const timeout = setTimeout(() => {
-      setStatus('Match found!');
-      setTimeout(() => {
-        router.push('/chat');
-      }, 1000);
-    }, matchTime);
+    let isActive = true;
 
-    return () => clearTimeout(timeout);
-  }, [router]);
+    const attemptMatch = async () => {
+      try {
+        // Try to find a match
+        const match = await findMatch(userId);
 
-  const handleCancel = () => {
-    if (confirm('Are you sure you want to cancel?')) {
+        console.log('Match result:', match);
+
+        if (match && isActive) {
+          //found a match
+          setStatus('Match found! Setting up chat...');
+
+          //create chat session
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const chatSession = await createChatSession(userId, match.user_id);
+
+          //store chat session id in localStorage
+          localStorage.setItem('sessionId', chatSession.id);
+          localStorage.setItem('partnerId', match.user_id);
+
+          //redirect to chat page
+          setTimeout(() => {
+            router.push('/chat');
+          }, 1000); //poll every second
+        }
+      } catch (error) {
+        console.error('Error finding match', error);
+      }
+    };
+    
+    //poll every 5 seconds
+    const pollInterval = setInterval(attemptMatch, 5000);
+    //initial attempt
+    attemptMatch();
+
+    return () => {
+      isActive = false;
+      clearInterval(pollInterval);
+    };
+  }, [userId, router]);
+
+  const handleCancel = async () => {
+    if (confirm('Are you sure you want to cancel the search?')) {
+      try {
+        //remove user from waiting queue
+        if (userId) {
+          await supabase
+            .from('waiting_queue')
+            .delete()
+            .eq('user_id', userId);
+      }
+
+      //redirect to landing page
+      router.push('/');
+    } catch (error) {
+        console.error('Error cancelling search', error);
         router.push('/');
+      }
     }
   };
 
