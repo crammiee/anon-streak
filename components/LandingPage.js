@@ -1,12 +1,38 @@
 "use client"
 
 import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { createAnonymousUser, joinWaitingQueue } from "@/lib/utils";
 
 export default function LandingPage() {
     const router = useRouter();
+    const [isLoading, setIsLoading] = useState(false);
 
-    const handleStartChatting = () => {
-        router.push("/matching");
+    const handleStartChatting = async () => {
+      setIsLoading(true); 
+      try {
+        //check if user already exists in localStorage
+        let userId = localStorage.getItem("userId");
+
+        if (!userId) {
+          //create anonymous user
+          const user = await createAnonymousUser();
+          userId = user.id;
+          localStorage.setItem("userId", userId);
+        }
+        
+        //join waiting queue
+        await joinWaitingQueue(user.id);
+
+        //redirect to waiting page
+        router.push('/matching');
+      
+      } catch (error) {
+        console.error("Error starting chat:", error);
+        alert("An error occurred while trying to start chatting. Please try again.");
+      } finally {
+        setIsLoading(false);
+      }
     };
 
   return (
