@@ -57,8 +57,7 @@ export default function MatchingRoom() {
           //found a match
           setStatus('Match found! Setting up chat...');
 
-          //create chat session
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          //create chat session 
           const chatSession = await createChatSession(userId, match.user_id);
 
           //store chat session id in localStorage

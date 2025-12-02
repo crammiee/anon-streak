@@ -2,15 +2,20 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { sendMessage, subscribeToMessages, endChatSession, supabase } from '@/lib/utils';
 
 export default function ChatInterface() {
     const router = useRouter();
-
     const [messages, setMessages] = useState([]);
     const [inputMessage, setInputMessage] = useState('');
-    const [isTyping, setIsTyping] = useState(false);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [isTyping] = useState(false);
+    const [sessionId, setSessionId] = useState(null);
+    const [userId, setUserId] = useState(null);
+    const [, setPartnerId] = useState(null);
     const messagesEndRef = useRef(null);
 
+  //auto-scroll to bottom
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -19,58 +24,127 @@ export default function ChatInterface() {
     scrollToBottom();
   }, [messages]);
 
+  //get sessionId and userId from localStorage
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    const storedSessionId = localStorage.getItem('sessionId');
+    const storedUserId = localStorage.getItem('userId');
+    const storedPartnerId = localStorage.getItem('partnerId');
+
+    if (!storedSessionId || !storedUserId) {
+      // no session, redirect to home
+      router.push('/');
+      return;
+    }
+
+    setSessionId(storedSessionId);
+    setUserId(storedUserId);
+    setPartnerId(storedPartnerId);
+
+    // add system message
     setMessages([
       {
-        id: 1,
+        id: 'system-1',
         text: "You're now connected with a stranger. Say hi!",
         isSystem: true,
         timestamp: new Date(),
-      },
+      }
     ]);
-  }, []);
+  }, [router]);
 
-  const simulateStrangerResponse = () => {
-    setIsTyping(true);
-    
-    setTimeout(() => {
-      const responses = [
-        "Hey! How's it going?",
-        "Hi there! 👋",
-        "Hello! What brings you here today?",
-        "Nice to meet you!",
-        "Hey! Tell me something interesting about yourself",
-      ];
-      
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-      
-      setMessages(prev => [
-        ...prev,
-        {
-          id: Date.now(),
-          text: randomResponse,
-          isOwn: false,
-          timestamp: new Date(),
-        },
-      ]);
-      setIsTyping(false);
-    }, 1500);
-  };
+  // load existing messages from database
+  useEffect(() => {
+    if (!sessionId) return;
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) return;
+    const loadMessages = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('session_id', sessionId)
+          .order('created_at', { ascending: true });
+        
+        if (error) throw error;
 
-    const newMessage = {
-      id: Date.now(),
-      text: inputMessage,
+        if (data && data.length > 0) {
+          const formattedMessages = data.map(msg => ({
+            id: msg.id,
+            text: msg.content,
+            isOwn: msg.sender_id === userId,
+            timestamp: new Date(msg.created_at),
+          }));
+
+          setMessages(prev => [...prev, ...formattedMessages]);
+        }
+      } catch (error) {
+        console.error('Error loading messages:', error);
+      }
+    };
+
+    loadMessages();
+  }, [sessionId, userId]);
+
+  //subscribe to new messages (real-time)
+  useEffect(() => {
+    if (!sessionId || !userId) return;
+
+    const channel = subscribeToMessages(sessionId, (payload) => {
+      const newMessage = payload.new;
+
+      //Only add message if it's not from self
+      if (newMessage.sender_id !== userId) {
+        setMessages(prev => [
+          ...prev,
+          {
+            id: newMessage.id,
+            text: newMessage.content,
+            isOwn: false,
+            timestamp: new Date(newMessage.created_at),
+          },
+        ]);
+      }
+    });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [sessionId, userId]);
+
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || !sessionId || !userId) return;
+
+    const messageText = inputMessage;
+    setInputMessage('');
+
+    //optimistic add message to ui
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMessage = {
+      id: tempId,
+      text: messageText,
       isOwn: true,
       timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, newMessage]);
-    setInputMessage('');
-    simulateStrangerResponse();
+    setMessages(prev => [...prev, optimisticMessage]);
+
+    try {
+      //send message to backend
+      const sentMessage = await sendMessage(sessionId, userId, messageText)
+
+      //replace optimistic message id with real id
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === tempId
+          ? { ...msg, id: sentMessage.id }
+          : msg
+        )
+      );
+    } catch (error) {
+      console.error('Error sending message:', error);
+      alert('Failed to send message. Please try again.'); 
+
+      //remove failed optimistic message
+      setMessages(prev => prev.filter(msg => msg.id !== tempId));
+    }
   };
 
   const handleKeyPress = (e) => {
@@ -80,14 +154,29 @@ export default function ChatInterface() {
     }
   };
 
-  const handleLeaveChat = () => {
+  handleLeaveChat = async () => {
     if (confirm('Are you sure you want to leave this chat?')) {
-      router.push('/');
+      try {
+        if (sessionId) {
+          await endChatSession(sessionId);
+        }
+
+        //clear session data
+        localStorage.removeItem('sessionId');
+        localStorage.removeItem('partnerId');
+
+        //navigate to landing
+        router.push('/');
+      } catch (error) {
+        console.error('Error leaving chat session:', error);
+        router.push('/');
+      }
     }
   };
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-white">
+      {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
@@ -102,16 +191,19 @@ export default function ChatInterface() {
         </button>
       </div>
 
+      {/* Messages Container */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
         {messages.map((message) => (
           <div key={message.id}>
             {message.isSystem ? (
+              // System Message
               <div className="flex justify-center">
                 <div className="px-4 py-2 text-xs text-zinc-500 bg-zinc-900 rounded-full">
                   {message.text}
                 </div>
               </div>
             ) : (
+              // Chat Message
               <div className={`flex ${message.isOwn ? 'justify-end' : 'justify-start'}`}>
                 <div
                   className={`max-w-[70%] px-4 py-3 rounded-2xl ${
@@ -127,21 +219,10 @@ export default function ChatInterface() {
           </div>
         ))}
 
-        {isTyping && (
-          <div className="flex justify-start">
-            <div className="max-w-[70%] px-4 py-3 bg-zinc-800 rounded-2xl rounded-bl-sm">
-              <div className="flex gap-1">
-                <div className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                <div className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                <div className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-              </div>
-            </div>
-          </div>
-        )}
-
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Input Area */}
       <div className="border-t border-zinc-800 px-6 py-4">
         <div className="flex gap-3">
           <input
