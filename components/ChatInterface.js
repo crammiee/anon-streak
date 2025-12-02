@@ -87,6 +87,8 @@ export default function ChatInterface() {
   useEffect(() => {
     if (!sessionId || !userId) return;
 
+    console.log('Subscribing to messages for session:', sessionId);
+
     const channel = subscribeToMessages(sessionId, (payload) => {
       const newMessage = payload.new;
 
@@ -101,10 +103,13 @@ export default function ChatInterface() {
             timestamp: new Date(newMessage.created_at),
           },
         ]);
+      } else {
+        console.log('Ignoring own message:', newMessage);
       }
     });
 
     return () => {
+      console.log('Unsubscribing from messages for session:', sessionId);
       supabase.removeChannel(channel);
     };
   }, [sessionId, userId]);
