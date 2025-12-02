@@ -74,8 +74,8 @@ export default function MatchingRoom() {
       }
     };
     
-    //poll every 5 seconds
-    const pollInterval = setInterval(attemptMatch, 5000);
+    //poll every 2 seconds
+    const pollInterval = setInterval(attemptMatch, 2000);
     //initial attempt
     attemptMatch();
 

@@ -154,7 +154,7 @@ export default function ChatInterface() {
     }
   };
 
-  handleLeaveChat = async () => {
+  const handleLeaveChat = async () => {
     if (confirm('Are you sure you want to leave this chat?')) {
       try {
         if (sessionId) {
