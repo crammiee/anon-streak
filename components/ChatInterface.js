@@ -57,15 +57,22 @@ export default function ChatInterface() {
 
     const loadMessages = async () => {
       try {
+        console.log('Loading existing messages for session:', sessionId);
+
         const { data, error } = await supabase
           .from('messages')
           .select('*')
           .eq('session_id', sessionId)
           .order('created_at', { ascending: true });
+
+        console.log('Loaded messages data:', data);
+        console.log('Loaded messages error:', error);
         
         if (error) throw error;
 
         if (data && data.length > 0) {
+          console.log('found data length:', data.length);
+
           const formattedMessages = data.map(msg => ({
             id: msg.id,
             text: msg.content,
@@ -73,7 +80,13 @@ export default function ChatInterface() {
             timestamp: new Date(msg.created_at),
           }));
 
-          setMessages(prev => [...prev, ...formattedMessages]);
+          setMessages(prev => {
+            //keep system messages at the top
+            const systemMessages = prev.filter(m => m.isSystem);
+            return [...systemMessages, ...formattedMessages];
+          });
+        } else {
+          console.log('No existing messages found for this session.');
         }
       } catch (error) {
         console.error('Error loading messages:', error);
@@ -87,7 +100,8 @@ export default function ChatInterface() {
   useEffect(() => {
     if (!sessionId || !userId) return;
 
-    console.log('Subscribing to messages for session:', sessionId);
+    console.log('Setting up message subscription for session:', sessionId);
+    console.log('Current userId:', userId);
 
     let channel;
     let subscribed = false;
@@ -109,21 +123,30 @@ export default function ChatInterface() {
           },
           (payload) => {
             console.log('Received new message payload:', payload);
+            console.log('payload details:', JSON.stringify(payload, null, 2));
 
             const newMessage = payload.new;
+            console.log('New message details:', newMessage);
+            console.log('Message sender ID:', newMessage.sender_id);
+            console.log('Current user ID:', userId);
+            console.log('is from partner?', newMessage.sender_id !== userId);
 
             //Only add message if it's not from self
             if (newMessage.sender_id !== userId) {
               console.log('Adding new message from partner:', newMessage);
-              setMessages(prev => [
-                ...prev,
-                {
-                  id: newMessage.id,
-                  text: newMessage.content,
-                  isOwn: false,
-                  timestamp: new Date(newMessage.created_at),
-                },
-              ]);
+              setMessages(prev => {
+                const updated = [
+                  ...prev,
+                  {
+                    id: newMessage.id,
+                    text: newMessage.content,
+                    isOwn: false,
+                    timestamp: new Date(newMessage.created_at),
+                  },
+              ];
+              console.log('Current messages state:', updated);
+              return updated;
+            })
             } else {
               console.log('Ignoring own message:', newMessage);
             }
@@ -132,13 +155,17 @@ export default function ChatInterface() {
         .subscribe((status, err) => {
           console.log(`Subscription status for session ${sessionId}:`, status);
 
+          if (err) {
+            console.error('Subscription error:', err);
+          }
+
           if (status === 'SUBSCRIBED') {
             subscribed = true;
             console.log('Successfully subscribed to messages channel for session:', sessionId);
           }
 
           if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            console.error('Error subscribing to messages channel:', err);
+            console.error('Error subscribing to messages channel:', status, err);
 
             //retry after 2 seconds
             if (!subscribed) {
