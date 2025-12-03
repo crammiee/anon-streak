@@ -96,98 +96,64 @@ export default function ChatInterface() {
     loadMessages();
   }, [sessionId, userId]);
 
-  //subscribe to new messages (real-time)
+  //subscribe to new messages (real-time) - simplified ver
   useEffect(() => {
-    if (!sessionId || !userId) return;
+    if (!sessionId || !userId) {
+      console.log('Missing sessionId or userId, cannot subscribe to messages.');
+      return;
+    }
 
     console.log('Setting up message subscription for session:', sessionId);
     console.log('Current userId:', userId);
 
-    let channel;
-    let subscribed = false;
+    const channel = supabase
+      .channel(`realtime-messages`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          console.log('Received new message payload:', payload);
 
-    const setupSubscription = () => {
-      channel = supabase
-        .channel('messages:${sessionId}',
-          {config: { 
-            broadcast: { self: false },
-          },
-        })
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'messages',
-            filter: `session_id=eq.${sessionId}`
-          },
-          (payload) => {
-            console.log('Received new message payload:', payload);
-            console.log('payload details:', JSON.stringify(payload, null, 2));
+          const newMessage = payload.new;
 
-            const newMessage = payload.new;
-            console.log('New message details:', newMessage);
-            console.log('Message sender ID:', newMessage.sender_id);
-            console.log('Current user ID:', userId);
-            console.log('is from partner?', newMessage.sender_id !== userId);
+          console.log('Checking if message is for us:', {
+            messageSession: newMessage.session_id,
+            currentSession: sessionId,
+            isMatch: newMessage.session_id === sessionId,
+            messageSender: newMessage.sender_id,
+            ourUserId: userId,
+            isFromPartner: newMessage.sender_id !== userId,
+          });
 
-            //Only add message if it's not from self
-            if (newMessage.sender_id !== userId) {
-              console.log('Adding new message from partner:', newMessage);
-              setMessages(prev => {
-                const updated = [
-                  ...prev,
-                  {
-                    id: newMessage.id,
-                    text: newMessage.content,
-                    isOwn: false,
-                    timestamp: new Date(newMessage.created_at),
-                  },
-              ];
-              console.log('Current messages state:', updated);
-              return updated;
-            })
-            } else {
-              console.log('Ignoring own message:', newMessage);
-            }
+          //only add message if it's for this session and not from self
+          if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
+            console.log('Adding new message from partner:', newMessage);
+
+            setMessages(prev => [
+              ...prev,
+              {
+                id: newMessage.id,
+                text: newMessage.content,
+                isOwn: false,
+                timestamp: new Date(newMessage.created_at),
+              }
+            ]);
+          } else {
+            console.log('Ignoring message not for us or from self:', newMessage);
           }
-        )
-        .subscribe((status, err) => {
-          console.log(`Subscription status for session ${sessionId}:`, status);
-
-          if (err) {
-            console.error('Subscription error:', err);
-          }
-
-          if (status === 'SUBSCRIBED') {
-            subscribed = true;
-            console.log('Successfully subscribed to messages channel for session:', sessionId);
-          }
-
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            console.error('Error subscribing to messages channel:', status, err);
-
-            //retry after 2 seconds
-            if (!subscribed) {
-              console.log('Retrying subscription in 2 seconds...');
-              setTimeout(() => {
-                if (channel) {
-                  supabase.removeChannel(channel);
-                }
-                setupSubscription();
-              }, 2000);
-            }
-          }
-        });
-    };
-
-    setupSubscription();
+        }
+      )
+      .subscribe((status) => {
+        console.log(`Subscription status for session ${sessionId}:`, status);
+      });
 
     return () => {
       console.log('Unsubscribing from messages for session:', sessionId);
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
+      supabase.removeChannel(channel);
     };
   }, [sessionId, userId]);
 

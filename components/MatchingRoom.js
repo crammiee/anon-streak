@@ -64,13 +64,18 @@ export default function MatchingRoom() {
           console.log('Matched! Payload:', payload);
 
           //small delay to let other user create session
-          await new Promise(res => setTimeout(res, 500));
+          await new Promise(resolve => setTimeout(resolve, 1000));
 
           //find our chat session
           const { data: sessions, error } = await supabase
             .from('chat_sessions')
             .select('*')
             .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+            .eq('status', 'active')
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          console.log('Fetched chat sessions after match:', sessions);
           
           if (error) {
             console.error('Error fetching chat session:', error);
@@ -81,6 +86,7 @@ export default function MatchingRoom() {
             const session = sessions[0];
             const partnerId = session.user1_id === userId ? session.user2_id : session.user1_id;
 
+            console.log('Found chat session:', session.id, 'with partner:', partnerId);
             setStatus('Match found! Setting up chat...');
 
             //store session data
@@ -103,7 +109,7 @@ export default function MatchingRoom() {
       if (hasMatched) return;
 
       try {
-        // Try to find a match
+        console.log('Attempting to find match for user:', userId);
         const match = await findMatch(userId);
 
         console.log('Match result:', match);
@@ -116,6 +122,7 @@ export default function MatchingRoom() {
 
           //create chat session 
           const chatSession = await createChatSession(userId, match.user_id);
+          console.log('Created chat session:', chatSession.id);
 
           //store chat session id in localStorage
           localStorage.setItem('sessionId', chatSession.id);
