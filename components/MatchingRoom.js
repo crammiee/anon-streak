@@ -84,7 +84,7 @@ export default function MatchingRoom() {
 
         console.log('Transactional match result:', result);
 
-        if (result && result.session_id && isActive && !hasMatched) {
+        if (result && result.session_id && result.partner_id && isActive && !hasMatched) {
           hasMatched = true;
           setStatus('Match found! Setting up chat...');
 

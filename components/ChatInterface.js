@@ -171,6 +171,62 @@ export default function ChatInterface() {
     };
   }, [sessionId, userId, isReady]); //depend on isReady to ensure sessionId and userId are set
 
+  // listen for session end (partner leaving chat)
+  useEffect(() => {
+    if (!sessionId) {
+      console.log('Missing sessionId, cannot subscribe to session status.');
+      return;
+    }
+
+    console.log('Setting up session status subscription for session:', sessionId);
+
+    const statusChannel = supabase
+      .channel(`realtime-session-${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'chat_sessions',
+          filter: `id=eq.${sessionId}`,
+        },
+        (payload) => {
+          const updated = payload.new;
+          console.log('Received session update payload:', updated);
+
+          if (updated.status === 'ended') {
+            console.log('Session ended, notifying user and returning to landing.');
+
+            setMessages(prev => [
+              ...prev,
+              {
+                id: `system-ended-${Date.now()}`,
+                text: 'The other person has left the chat.',
+                isSystem: true,
+                timestamp: new Date(),
+              },
+            ]);
+
+            // Clear session data and redirect after a short delay
+            localStorage.removeItem('sessionId');
+            localStorage.removeItem('partnerId');
+
+            setTimeout(() => {
+              router.push('/');
+            }, 1500);
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log(`Session status subscription for ${sessionId}:`, status);
+      });
+
+    return () => {
+      console.log('Unsubscribing from session status for session:', sessionId);
+      supabase.removeChannel(statusChannel);
+    };
+  }, [sessionId, router]);
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || !sessionId || !userId) return;
 
