@@ -13,7 +13,14 @@ import {
 
 export default function ChatInterface() {
   const router = useRouter();
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => [
+    {
+      id: 'system-1',
+      text: "You're now connected with a stranger. Say hi!",
+      isSystem: true,
+      timestamp: new Date(),
+    },
+  ]);
   const [inputMessage, setInputMessage] = useState('');
   const [sessionId] = useState(() => localStorage.getItem('sessionId'));
   const [userId] = useState(() => localStorage.getItem('userId'));
@@ -29,7 +36,7 @@ export default function ChatInterface() {
     scrollToBottom();
   }, [messages]);
 
-  // validate session on mount and add initial system message
+  // validate session on mount
   useEffect(() => {
     const storedSessionId = sessionId;
     const storedUserId = userId;
@@ -46,24 +53,7 @@ export default function ChatInterface() {
       router.push('/');
       return;
     }
-
-    // add system message (only if none yet) via external effect
-    if (messages.length === 0) {
-      setTimeout(() => {
-        setMessages(prev => {
-          if (prev.length > 0) return prev;
-          return [
-            {
-              id: 'system-1',
-              text: "You're now connected with a stranger. Say hi!",
-              isSystem: true,
-              timestamp: new Date(),
-            }
-          ];
-        });
-      }, 0);
-    }
-  }, [router, sessionId, userId, messages.length]);
+  }, [router, sessionId, userId]);
 
   // load existing messages from database
   useEffect(() => {
