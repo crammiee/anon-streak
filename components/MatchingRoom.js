@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { findMatch, createChatSession, supabase } from '@/lib/utils';
+import { matchAndCreateSession, supabase } from '@/lib/utils';
 
 export default function MatchingRoom() {
   const router = useRouter();
@@ -18,7 +18,6 @@ export default function MatchingRoom() {
       router.push('/');
       return;
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUserId(storedUserId);
 
     const cleanupSessions = async () => {
@@ -65,170 +64,43 @@ export default function MatchingRoom() {
     return () => clearInterval(timer);
   }, []);
 
-  // new matching logic: listen for when we get matched (our queue entry is removed)
+  // matching logic: poll a transactional RPC that does match + create in the DB
   useEffect(() => {
     if (!userId) return;
 
     let isActive = true;
     let hasMatched = false;
-
-    // helper to look for an active chat session involving this user and a specific partner
-    const waitForChatSession = (partnerUserId) => {
-      let attempts = 0;
-      const maxAttempts = 10; // ~10 seconds max
-
-      const intervalId = setInterval(async () => {
-        if (!isActive || hasMatched) {
-          clearInterval(intervalId);
-          return;
-        }
-
-        attempts += 1;
-
-        try {
-          const { data: sessions, error } = await supabase
-            .from('chat_sessions')
-            .select('*')
-            .eq('status', 'active')
-            .or(
-              `and(user1_id.eq.${userId},user2_id.eq.${partnerUserId}),` +
-              `and(user1_id.eq.${partnerUserId},user2_id.eq.${userId})`
-            )
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (error) {
-            console.error('Error waiting for chat session:', error);
-          }
-
-          if (sessions && sessions.length > 0) {
-            const session = sessions[0];
-            const partnerId =
-              session.user1_id === userId ? session.user2_id : session.user1_id;
-
-            console.log('Found chat session while waiting:', session.id, 'with partner:', partnerId);
-
-            hasMatched = true;
-            setStatus('Match found! Setting up chat...');
-
-            localStorage.setItem('sessionId', session.id);
-            localStorage.setItem('partnerId', partnerId);
-
-            setTimeout(() => {
-              if (isActive) {
-                router.push('/chat');
-              }
-            }, 1000);
-
-            clearInterval(intervalId);
-            return;
-          }
-        } catch (err) {
-          console.error('Unexpected error while waiting for chat session:', err);
-        }
-
-        if (attempts >= maxAttempts) {
-          console.warn('Timed out waiting for chat session to appear');
-          clearInterval(intervalId);
-        }
-      }, 1000);
-    };
-
-    //subscribe to own queue entry being deleted
-    const queueChannel = supabase
-      .channel(`queue-${userId}`)
-      .on(
-        'postgres_changes',
-        { event: 'DELETE',
-          schema: 'public', 
-          table: 'waiting_queue', 
-          filter: `user_id=eq.${userId}`
-        },
-        async (payload) => {
-          if (hasMatched || !isActive) return;
-          hasMatched = true;
-
-          console.log('Matched! Payload:', payload);
-
-          //small delay to let other user create session
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-          //find our chat session
-          const { data: sessions, error } = await supabase
-            .from('chat_sessions')
-            .select('*')
-            .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-            .eq('status', 'active')
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          console.log('Fetched chat sessions after match:', sessions);
-          
-          if (error) {
-            console.error('Error fetching chat session:', error);
-            return;
-          }
-
-          if (sessions && sessions.length > 0) {
-            const session = sessions[0];
-            const partnerId = session.user1_id === userId ? session.user2_id : session.user1_id;
-
-            console.log('Found chat session:', session.id, 'with partner:', partnerId);
-            setStatus('Match found! Setting up chat...');
-
-            //store session data
-            localStorage.setItem('sessionId', session.id);
-            localStorage.setItem('partnerId', partnerId);
-
-            //navigate to chat
-            setTimeout(() => {
-              if (isActive) {
-                router.push('/chat');
-              }
-            }, 1000);
-          }
-        }
-      )
-      .subscribe();
+    let isRequestInFlight = false;
     
     // also try to match with others (polling as backup)
     const attemptMatch = async () => {
-      if (hasMatched) return;
+      if (hasMatched || !isActive || isRequestInFlight) return;
+
+      isRequestInFlight = true;
 
       try {
-        console.log('Attempting to find match for user:', userId);
-        const match = await findMatch(userId);
+        console.log('Attempting transactional match for user:', userId);
+        const result = await matchAndCreateSession(userId);
 
-        console.log('Match result:', match);
+        console.log('Transactional match result:', result);
 
-        if (match && isActive && !hasMatched) {
-          // found a match
-          // Decide deterministically which side creates the chat session
-          if (userId > match.user_id) {
-            // We are the "initiator" -> create the session
-            hasMatched = true;
-            console.log('We are initiator. Creating chat with:', match.user_id);
-            setStatus('Match found! Setting up chat...');
+        if (result && result.session_id && isActive && !hasMatched) {
+          hasMatched = true;
+          setStatus('Match found! Setting up chat...');
 
-            const chatSession = await createChatSession(userId, match.user_id);
-            console.log('Created chat session:', chatSession.id);
+          localStorage.setItem('sessionId', result.session_id);
+          localStorage.setItem('partnerId', result.partner_id);
 
-            localStorage.setItem('sessionId', chatSession.id);
-            localStorage.setItem('partnerId', match.user_id);
-
-            setTimeout(() => {
+          setTimeout(() => {
+            if (isActive) {
               router.push('/chat');
-            }, 1000);
-          } else {
-            // The other user will create the chat; start waiting for the session to appear
-            console.log('We are not initiator. Waiting for other side to create chat.');
-            setStatus('Match found! Connecting...');
-            // Start polling for the new chat session between us and the matched user
-            waitForChatSession(match.user_id);
-          }
+            }
+          }, 1000);
         }
       } catch (error) {
-        console.error('Error finding match', error);
+        console.error('Error during transactional match', error);
+      } finally {
+        isRequestInFlight = false;
       }
     };
     
@@ -240,7 +112,6 @@ export default function MatchingRoom() {
     return () => {
       isActive = false;
       clearInterval(pollInterval);
-      supabase.removeChannel(queueChannel);
     };
   }, [userId, router]);
 
