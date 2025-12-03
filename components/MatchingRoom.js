@@ -20,6 +20,31 @@ export default function MatchingRoom() {
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setUserId(storedUserId);
+
+    const cleanupSessions = async () => {
+      //clean up any old active chat sessions for this user
+      try {
+        const { data: activeSessions } = await supabase
+          .from('chat_sessions')
+          .select('*')
+          .eq('status', 'active')
+          .or(`user1_id.eq.${storedUserId},user2_id.eq.${storedUserId}`);
+        
+          if (activeSessions && activeSessions.length > 0) {
+            console.log('Cleaning up old active sessions for user:', activeSessions.length);
+
+            const sessionIds = activeSessions.map(session => session.id);
+            await supabase
+              .from('chat_sessions')
+              .update({ status: 'ended', ended_at: new Date().toISOString() })
+              .in('id', sessionIds);
+          }
+      } catch (error) {
+        console.error('Error cleaning up old sessions:', error);
+      }
+    };
+    cleanupSessions();
+
   }, [router]);
 
   // Animated dots effect

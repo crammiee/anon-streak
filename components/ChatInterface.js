@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { sendMessage, subscribeToMessages, endChatSession, supabase } from '@/lib/utils';
 
 export default function ChatInterface() {
@@ -12,7 +13,9 @@ export default function ChatInterface() {
     const [isTyping] = useState(false);
     const [sessionId, setSessionId] = useState(null);
     const [userId, setUserId] = useState(null);
-    const [, setPartnerId] = useState(null);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [partnerId, setPartnerId] = useState(null);
+    const [isReady, setIsReady] = useState(false);
     const messagesEndRef = useRef(null);
 
   //auto-scroll to bottom
@@ -30,8 +33,15 @@ export default function ChatInterface() {
     const storedUserId = localStorage.getItem('userId');
     const storedPartnerId = localStorage.getItem('partnerId');
 
+    console.log('Retrieved from localStorage:', {
+      sessionId: storedSessionId,
+      userId: storedUserId,
+      partnerId: storedPartnerId,
+    });
+
     if (!storedSessionId || !storedUserId) {
       // no session, redirect to home
+      console.log('Missing sessionId or userId in localStorage, redirecting to home.');
       router.push('/');
       return;
     }
@@ -85,14 +95,15 @@ export default function ChatInterface() {
             const systemMessages = prev.filter(m => m.isSystem);
             return [...systemMessages, ...formattedMessages];
           });
-        } else {
-          console.log('No existing messages found for this session.');
         }
-
-        console.log('message loaded ready for realtime subscription.');
+        
+        //mark as ready after messages are loaded
+        console.log('messages are loaded');
+        setIsReady(true);
 
       } catch (error) {
         console.error('Error loading messages:', error);
+        setIsReady(true); //even on error, mark as ready to allow sending
       }
     };
 
@@ -109,61 +120,56 @@ export default function ChatInterface() {
     console.log('Setting up message subscription for session:', sessionId);
     console.log('Current userId:', userId);
 
-    const setupTimer = setTimeout(() => {
+    const channel = supabase
+      .channel(`realtime-messages-${sessionId}`) //unique channel per session
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          console.log('Received new message payload:', payload);
 
-      const channel = supabase
-        .channel(`realtime-messages`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'messages',
-          },
-          (payload) => {
-            console.log('Received new message payload:', payload);
+          const newMessage = payload.new;
 
-            const newMessage = payload.new;
+          console.log('Checking if message is for us:', {
+            messageSession: newMessage.session_id,
+            currentSession: sessionId,
+            isMatch: newMessage.session_id === sessionId,
+            messageSender: newMessage.sender_id,
+            ourUserId: userId,
+            isFromPartner: newMessage.sender_id !== userId,
+          });
 
-            console.log('Checking if message is for us:', {
-              messageSession: newMessage.session_id,
-              currentSession: sessionId,
-              isMatch: newMessage.session_id === sessionId,
-              messageSender: newMessage.sender_id,
-              ourUserId: userId,
-              isFromPartner: newMessage.sender_id !== userId,
-            });
+          //only add message if it's for this session and not from self
+          if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
+            console.log('Adding new message from partner:', newMessage);
 
-            //only add message if it's for this session and not from self
-            if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
-              console.log('Adding new message from partner:', newMessage);
-
-              setMessages(prev => [
-                ...prev,
-                {
-                  id: newMessage.id,
-                  text: newMessage.content,
-                  isOwn: false,
-                  timestamp: new Date(newMessage.created_at),
-                }
-              ]);
-            } else {
-              console.log('Ignoring message not for us or from self:', newMessage);
-            }
+            setMessages(prev => [
+              ...prev,
+              {
+                id: newMessage.id,
+                text: newMessage.content,
+                isOwn: false,
+                timestamp: new Date(newMessage.created_at),
+              }
+            ]);
+          } else {
+            console.log('Ignoring message not for us or from self:', newMessage);
           }
-        )
-        .subscribe((status) => {
-          console.log(`Subscription status for session ${sessionId}:`, status);
-        });
+        }
+      )
+      .subscribe((status) => {
+        console.log(`Subscription status for session ${sessionId}:`, status);
+      });
 
-      return () => {
-        console.log('Unsubscribing from messages for session:', sessionId);
-        supabase.removeChannel(channel);
-      };
-    }, 3000); //3 second delay before setting up subscription
-
-    return () => clearTimeout(setupTimer);
-  }, [sessionId, userId]);
+    return () => {
+      console.log('Unsubscribing from messages for session:', sessionId);
+      supabase.removeChannel(channel);
+    };
+  }, [sessionId, userId, isReady]); //depend on isReady to ensure sessionId and userId are set
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || !sessionId || !userId) return;
