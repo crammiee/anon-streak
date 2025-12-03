@@ -88,6 +88,9 @@ export default function ChatInterface() {
         } else {
           console.log('No existing messages found for this session.');
         }
+
+        console.log('message loaded ready for realtime subscription.');
+
       } catch (error) {
         console.error('Error loading messages:', error);
       }
@@ -106,55 +109,60 @@ export default function ChatInterface() {
     console.log('Setting up message subscription for session:', sessionId);
     console.log('Current userId:', userId);
 
-    const channel = supabase
-      .channel(`realtime-messages`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-        },
-        (payload) => {
-          console.log('Received new message payload:', payload);
+    const setupTimer = setTimeout(() => {
 
-          const newMessage = payload.new;
+      const channel = supabase
+        .channel(`realtime-messages`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+          },
+          (payload) => {
+            console.log('Received new message payload:', payload);
 
-          console.log('Checking if message is for us:', {
-            messageSession: newMessage.session_id,
-            currentSession: sessionId,
-            isMatch: newMessage.session_id === sessionId,
-            messageSender: newMessage.sender_id,
-            ourUserId: userId,
-            isFromPartner: newMessage.sender_id !== userId,
-          });
+            const newMessage = payload.new;
 
-          //only add message if it's for this session and not from self
-          if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
-            console.log('Adding new message from partner:', newMessage);
+            console.log('Checking if message is for us:', {
+              messageSession: newMessage.session_id,
+              currentSession: sessionId,
+              isMatch: newMessage.session_id === sessionId,
+              messageSender: newMessage.sender_id,
+              ourUserId: userId,
+              isFromPartner: newMessage.sender_id !== userId,
+            });
 
-            setMessages(prev => [
-              ...prev,
-              {
-                id: newMessage.id,
-                text: newMessage.content,
-                isOwn: false,
-                timestamp: new Date(newMessage.created_at),
-              }
-            ]);
-          } else {
-            console.log('Ignoring message not for us or from self:', newMessage);
+            //only add message if it's for this session and not from self
+            if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
+              console.log('Adding new message from partner:', newMessage);
+
+              setMessages(prev => [
+                ...prev,
+                {
+                  id: newMessage.id,
+                  text: newMessage.content,
+                  isOwn: false,
+                  timestamp: new Date(newMessage.created_at),
+                }
+              ]);
+            } else {
+              console.log('Ignoring message not for us or from self:', newMessage);
+            }
           }
-        }
-      )
-      .subscribe((status) => {
-        console.log(`Subscription status for session ${sessionId}:`, status);
-      });
+        )
+        .subscribe((status) => {
+          console.log(`Subscription status for session ${sessionId}:`, status);
+        });
 
-    return () => {
-      console.log('Unsubscribing from messages for session:', sessionId);
-      supabase.removeChannel(channel);
-    };
+      return () => {
+        console.log('Unsubscribing from messages for session:', sessionId);
+        supabase.removeChannel(channel);
+      };
+    }, 3000); //3 second delay before setting up subscription
+
+    return () => clearTimeout(setupTimer);
   }, [sessionId, userId]);
 
   const handleSendMessage = async () => {
