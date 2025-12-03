@@ -2,19 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { sendMessage, subscribeToMessages, endChatSession, supabase } from '@/lib/utils';
+import { sendMessage, endChatSession, supabase } from '@/lib/utils';
 
 export default function ChatInterface() {
     const router = useRouter();
     const [messages, setMessages] = useState([]);
     const [inputMessage, setInputMessage] = useState('');
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const [isTyping] = useState(false);
     const [sessionId, setSessionId] = useState(null);
     const [userId, setUserId] = useState(null);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const [partnerId, setPartnerId] = useState(null);
     const [isReady, setIsReady] = useState(false);
     const messagesEndRef = useRef(null);
 
