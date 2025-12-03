@@ -89,28 +89,78 @@ export default function ChatInterface() {
 
     console.log('Subscribing to messages for session:', sessionId);
 
-    const channel = subscribeToMessages(sessionId, (payload) => {
-      const newMessage = payload.new;
+    let channel;
+    let subscribed = false;
 
-      //Only add message if it's not from self
-      if (newMessage.sender_id !== userId) {
-        setMessages(prev => [
-          ...prev,
-          {
-            id: newMessage.id,
-            text: newMessage.content,
-            isOwn: false,
-            timestamp: new Date(newMessage.created_at),
+    const setupSubscription = () => {
+      channel = supabase
+        .channel('messages:${sessionId}',
+          {config: { 
+            broadcast: { self: false },
           },
-        ]);
-      } else {
-        console.log('Ignoring own message:', newMessage);
-      }
-    });
+        })
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `session_id=eq.${sessionId}`
+          },
+          (payload) => {
+            console.log('Received new message payload:', payload);
+
+            const newMessage = payload.new;
+
+            //Only add message if it's not from self
+            if (newMessage.sender_id !== userId) {
+              console.log('Adding new message from partner:', newMessage);
+              setMessages(prev => [
+                ...prev,
+                {
+                  id: newMessage.id,
+                  text: newMessage.content,
+                  isOwn: false,
+                  timestamp: new Date(newMessage.created_at),
+                },
+              ]);
+            } else {
+              console.log('Ignoring own message:', newMessage);
+            }
+          }
+        )
+        .subscribe((status, err) => {
+          console.log(`Subscription status for session ${sessionId}:`, status);
+
+          if (status === 'SUBSCRIBED') {
+            subscribed = true;
+            console.log('Successfully subscribed to messages channel for session:', sessionId);
+          }
+
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.error('Error subscribing to messages channel:', err);
+
+            //retry after 2 seconds
+            if (!subscribed) {
+              console.log('Retrying subscription in 2 seconds...');
+              setTimeout(() => {
+                if (channel) {
+                  supabase.removeChannel(channel);
+                }
+                setupSubscription();
+              }, 2000);
+            }
+          }
+        });
+    };
+
+    setupSubscription();
 
     return () => {
       console.log('Unsubscribing from messages for session:', sessionId);
-      supabase.removeChannel(channel);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [sessionId, userId]);
 
