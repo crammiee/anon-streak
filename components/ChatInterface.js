@@ -2,16 +2,23 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { sendMessage, endChatSession, supabase } from '@/lib/utils';
+import {
+  sendMessage,
+  endChatSession,
+  fetchMessagesForSession,
+  subscribeToSessionMessages,
+  subscribeToSessionStatus,
+  supabase,
+} from '@/lib/utils';
 
 export default function ChatInterface() {
-    const router = useRouter();
-    const [messages, setMessages] = useState([]);
-    const [inputMessage, setInputMessage] = useState('');
-    const [sessionId, setSessionId] = useState(null);
-    const [userId, setUserId] = useState(null);
-    const [isReady, setIsReady] = useState(false);
-    const messagesEndRef = useRef(null);
+  const router = useRouter();
+  const [messages, setMessages] = useState([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [sessionId] = useState(() => localStorage.getItem('sessionId'));
+  const [userId] = useState(() => localStorage.getItem('userId'));
+  const [isReady, setIsReady] = useState(false);
+  const messagesEndRef = useRef(null);
 
   //auto-scroll to bottom
   const scrollToBottom = () => {
@@ -22,10 +29,10 @@ export default function ChatInterface() {
     scrollToBottom();
   }, [messages]);
 
-  //get sessionId and userId from localStorage
+  // validate session on mount and add initial system message
   useEffect(() => {
-    const storedSessionId = localStorage.getItem('sessionId');
-    const storedUserId = localStorage.getItem('userId');
+    const storedSessionId = sessionId;
+    const storedUserId = userId;
     const storedPartnerId = localStorage.getItem('partnerId');
 
     console.log('Retrieved from localStorage:', {
@@ -35,45 +42,38 @@ export default function ChatInterface() {
     });
 
     if (!storedSessionId || !storedUserId) {
-      // no session, redirect to home
       console.log('Missing sessionId or userId in localStorage, redirecting to home.');
       router.push('/');
       return;
     }
 
-    setSessionId(storedSessionId);
-    setUserId(storedUserId);
-    setPartnerId(storedPartnerId);
-
-    // add system message
-    setMessages([
-      {
-        id: 'system-1',
-        text: "You're now connected with a stranger. Say hi!",
-        isSystem: true,
-        timestamp: new Date(),
-      }
-    ]);
-  }, [router]);
+    // add system message (only if none yet) via external effect
+    if (messages.length === 0) {
+      setTimeout(() => {
+        setMessages(prev => {
+          if (prev.length > 0) return prev;
+          return [
+            {
+              id: 'system-1',
+              text: "You're now connected with a stranger. Say hi!",
+              isSystem: true,
+              timestamp: new Date(),
+            }
+          ];
+        });
+      }, 0);
+    }
+  }, [router, sessionId, userId, messages.length]);
 
   // load existing messages from database
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !userId) return;
 
     const loadMessages = async () => {
       try {
         console.log('Loading existing messages for session:', sessionId);
 
-        const { data, error } = await supabase
-          .from('messages')
-          .select('*')
-          .eq('session_id', sessionId)
-          .order('created_at', { ascending: true });
-
-        console.log('Loaded messages data:', data);
-        console.log('Loaded messages error:', error);
-        
-        if (error) throw error;
+        const data = await fetchMessagesForSession(sessionId);
 
         if (data && data.length > 0) {
           console.log('found data length:', data.length);
@@ -91,11 +91,9 @@ export default function ChatInterface() {
             return [...systemMessages, ...formattedMessages];
           });
         }
-        
-        //mark as ready after messages are loaded
+
         console.log('messages are loaded');
         setIsReady(true);
-
       } catch (error) {
         console.error('Error loading messages:', error);
         setIsReady(true); //even on error, mark as ready to allow sending
@@ -105,66 +103,43 @@ export default function ChatInterface() {
     loadMessages();
   }, [sessionId, userId]);
 
-  //subscribe to new messages (real-time) - simplified ver
+  //subscribe to new messages (real-time)
   useEffect(() => {
-    if (!sessionId || !userId) {
-      console.log('Missing sessionId or userId, cannot subscribe to messages.');
+    if (!sessionId || !userId || !isReady) {
+      if (!isReady) {
+        console.log('Not ready yet, skipping message subscription.');
+      }
       return;
     }
 
     console.log('Setting up message subscription for session:', sessionId);
-    console.log('Current userId:', userId);
 
-    const channel = supabase
-      .channel(`realtime-messages-${sessionId}`) //unique channel per session
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-        },
-        (payload) => {
-          console.log('Received new message payload:', payload);
+    const channel = subscribeToSessionMessages(sessionId, (newMessage) => {
+      console.log('Received new message payload (utility):', newMessage);
 
-          const newMessage = payload.new;
+      //only add message if it's for this session and not from self
+      if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
+        console.log('Adding new message from partner:', newMessage);
 
-          console.log('Checking if message is for us:', {
-            messageSession: newMessage.session_id,
-            currentSession: sessionId,
-            isMatch: newMessage.session_id === sessionId,
-            messageSender: newMessage.sender_id,
-            ourUserId: userId,
-            isFromPartner: newMessage.sender_id !== userId,
-          });
-
-          //only add message if it's for this session and not from self
-          if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
-            console.log('Adding new message from partner:', newMessage);
-
-            setMessages(prev => [
-              ...prev,
-              {
-                id: newMessage.id,
-                text: newMessage.content,
-                isOwn: false,
-                timestamp: new Date(newMessage.created_at),
-              }
-            ]);
-          } else {
-            console.log('Ignoring message not for us or from self:', newMessage);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: newMessage.id,
+            text: newMessage.content,
+            isOwn: false,
+            timestamp: new Date(newMessage.created_at),
           }
-        }
-      )
-      .subscribe((status) => {
-        console.log(`Subscription status for session ${sessionId}:`, status);
-      });
+        ]);
+      } else {
+        console.log('Ignoring message not for us or from self:', newMessage);
+      }
+    });
 
     return () => {
       console.log('Unsubscribing from messages for session:', sessionId);
       supabase.removeChannel(channel);
     };
-  }, [sessionId, userId, isReady]); //depend on isReady to ensure sessionId and userId are set
+  }, [sessionId, userId, isReady]);
 
   // listen for session end (partner leaving chat)
   useEffect(() => {
@@ -175,46 +150,31 @@ export default function ChatInterface() {
 
     console.log('Setting up session status subscription for session:', sessionId);
 
-    const statusChannel = supabase
-      .channel(`realtime-session-${sessionId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'chat_sessions',
-          filter: `id=eq.${sessionId}`,
-        },
-        (payload) => {
-          const updated = payload.new;
-          console.log('Received session update payload:', updated);
+    const statusChannel = subscribeToSessionStatus(sessionId, (updated) => {
+      console.log('Received session update payload (utility):', updated);
 
-          if (updated.status === 'ended') {
-            console.log('Session ended, notifying user and returning to landing.');
+      if (updated.status === 'ended') {
+        console.log('Session ended, notifying user and returning to landing.');
 
-            setMessages(prev => [
-              ...prev,
-              {
-                id: `system-ended-${Date.now()}`,
-                text: 'The other person has left the chat.',
-                isSystem: true,
-                timestamp: new Date(),
-              },
-            ]);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `system-ended-${Date.now()}`,
+            text: 'The other person has left the chat.',
+            isSystem: true,
+            timestamp: new Date(),
+          },
+        ]);
 
-            // Clear session data and redirect after a short delay
-            localStorage.removeItem('sessionId');
-            localStorage.removeItem('partnerId');
+        // Clear session data and redirect after a short delay
+        localStorage.removeItem('sessionId');
+        localStorage.removeItem('partnerId');
 
-            setTimeout(() => {
-              router.push('/');
-            }, 1500);
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log(`Session status subscription for ${sessionId}:`, status);
-      });
+        setTimeout(() => {
+          router.push('/');
+        }, 1500);
+      }
+    });
 
     return () => {
       console.log('Unsubscribing from session status for session:', sessionId);
@@ -253,7 +213,7 @@ export default function ChatInterface() {
       );
     } catch (error) {
       console.error('Error sending message:', error);
-      alert('Failed to send message. Please try again.'); 
+      alert('Failed to send message. Please try again.');
 
       //remove failed optimistic message
       setMessages(prev => prev.filter(msg => msg.id !== tempId));
