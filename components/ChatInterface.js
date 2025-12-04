@@ -2,17 +2,13 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import {
-  sendMessage,
-  endChatSession,
-  fetchMessagesForSession,
-  subscribeToSessionMessages,
-  subscribeToSessionStatus,
-  checkRateLimit,
-  recordAction,
-  formatCooldown,
-  supabase,
-} from "@/lib/utils";
+import { supabase } from "@/lib/utils";
+import { useHeartbeat } from "@/hooks/useHeartbeat";
+import { useLoadMessages } from "@/hooks/useLoadMessages";
+import { useMessageSubscription } from "@/hooks/useMessageSubscription";
+import { useSessionStatus } from "@/hooks/useSessionStatus";
+import { sendMessageWithOptimism } from "@/lib/sendMessageWithOptimism";
+import { leaveChat } from "@/lib/leaveChat";
 
 export default function ChatInterface() {
   const router = useRouter();
@@ -38,119 +34,19 @@ export default function ChatInterface() {
 
   // Validate session
   useEffect(() => {
-    if (!sessionId || !userId) {
-      router.push("/");
-    }
+    if (!sessionId || !userId) router.push("/");
   }, [router, sessionId, userId]);
 
-  // Heartbeat
-  useEffect(() => {
-    if (!userId) return;
-    const beat = async () => {
-      try {
-        await supabase.rpc("user_heartbeat", { p_user_id: userId });
-      } catch (e) {
-        console.error("heartbeat error", e);
-      }
-    };
-    beat();
-    const hb = setInterval(beat, 10000);
-    return () => clearInterval(hb);
-  }, [userId]);
+  // Hooks
+  useHeartbeat(userId);
+  useLoadMessages(sessionId, userId, setMessages, setIsReady);
+  useMessageSubscription(sessionId, userId, isReady, setMessages);
+  useSessionStatus(sessionId, router, setMessages);
 
-  // Load existing messages
-  useEffect(() => {
-    if (!sessionId || !userId) return;
-    const loadMessages = async () => {
-      try {
-        const data = await fetchMessagesForSession(sessionId);
-        if (data?.length) {
-          const formatted = data.map((msg) => ({
-            id: msg.id,
-            text: msg.content,
-            isOwn: msg.sender_id === userId,
-            timestamp: new Date(msg.created_at),
-          }));
-          setMessages((prev) => {
-            const systemMessages = prev.filter((m) => m.isSystem);
-            return [...systemMessages, ...formatted];
-          });
-        }
-        setIsReady(true);
-      } catch (error) {
-        console.error("Error loading messages:", error);
-        setIsReady(true);
-      }
-    };
-    loadMessages();
-  }, [sessionId, userId]);
-
-  // Subscribe to new messages
-  useEffect(() => {
-    if (!sessionId || !userId || !isReady) return;
-    const channel = subscribeToSessionMessages(sessionId, (newMessage) => {
-      if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: newMessage.id,
-            text: newMessage.content,
-            isOwn: false,
-            timestamp: new Date(newMessage.created_at),
-          },
-        ]);
-      }
-    });
-    return () => supabase.removeChannel(channel);
-  }, [sessionId, userId, isReady]);
-
-  // Subscribe to session status
-  useEffect(() => {
-    if (!sessionId) return;
-    const statusChannel = subscribeToSessionStatus(sessionId, async (updated) => {
-      if (updated.status === "ended") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `system-ended-${Date.now()}`,
-            text: "The other person has left the chat.",
-            isSystem: true,
-            timestamp: new Date(),
-          },
-        ]);
-        localStorage.removeItem("sessionId");
-        localStorage.removeItem("partnerId");
-        // Ensure session is marked ended
-        try {
-          await endChatSession(sessionId);
-        } catch (e) {
-          console.error("Error ending session:", e);
-        }
-        setTimeout(() => router.push("/"), 1500);
-      }
-    });
-    return () => supabase.removeChannel(statusChannel);
-  }, [sessionId, router]);
-
-  const handleSendMessage = async () => {
+  const handleSendMessage = () => {
     if (!inputMessage.trim() || !sessionId || !userId) return;
-    const messageText = inputMessage;
+    sendMessageWithOptimism(sessionId, userId, inputMessage, setMessages);
     setInputMessage("");
-    const tempId = `temp-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: tempId, text: messageText, isOwn: true, timestamp: new Date() },
-    ]);
-    try {
-      const sentMessage = await sendMessage(sessionId, userId, messageText);
-      setMessages((prev) =>
-        prev.map((msg) => (msg.id === tempId ? { ...msg, id: sentMessage.id } : msg))
-      );
-    } catch (error) {
-      console.error("Error sending message:", error);
-      alert("Failed to send message. Please try again.");
-      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
-    }
   };
 
   const handleKeyPress = (e) => {
@@ -160,28 +56,7 @@ export default function ChatInterface() {
     }
   };
 
-  const handleLeaveChat = async () => {
-    const rateLimit = checkRateLimit("LEAVE_CHAT");
-    if (!rateLimit.allowed) {
-      setRateLimitError(
-        `Please wait ${formatCooldown(rateLimit.remainingMs)} before leaving again.`
-      );
-      setTimeout(() => setRateLimitError(null), rateLimit.remainingMs);
-      return;
-    }
-    if (confirm("Are you sure you want to leave this chat?")) {
-      try {
-        if (sessionId) await endChatSession(sessionId);
-        recordAction("LEAVE_CHAT");
-        localStorage.removeItem("sessionId");
-        localStorage.removeItem("partnerId");
-        router.push("/");
-      } catch (error) {
-        console.error("Error leaving chat:", error);
-        router.push("/");
-      }
-    }
-  };
+  const handleLeaveChat = () => leaveChat(sessionId, setRateLimitError, router);
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-white">
@@ -192,7 +67,6 @@ export default function ChatInterface() {
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
             <span className="text-sm text-zinc-400">Connected with Stranger</span>
           </div>
-          
           <button
             onClick={handleLeaveChat}
             disabled={!!rateLimitError}
@@ -210,25 +84,23 @@ export default function ChatInterface() {
         )}
       </div>
 
-      {/* Messages Container */}
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
         {messages.map((message) => (
           <div key={message.id}>
             {message.isSystem ? (
-              // System Message
               <div className="flex justify-center">
                 <div className="px-4 py-2 text-xs text-zinc-500 bg-zinc-900 rounded-full">
                   {message.text}
                 </div>
               </div>
             ) : (
-              // Chat Message
-              <div className={`flex ${message.isOwn ? 'justify-end' : 'justify-start'}`}>
+              <div className={`flex ${message.isOwn ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`max-w-[70%] px-4 py-3 rounded-2xl ${
                     message.isOwn
-                      ? 'bg-blue-600 text-white rounded-br-sm'
-                      : 'bg-zinc-800 text-zinc-100 rounded-bl-sm'
+                      ? "bg-blue-600 text-white rounded-br-sm"
+                      : "bg-zinc-800 text-zinc-100 rounded-bl-sm"
                   }`}
                 >
                   <p className="text-sm leading-relaxed">{message.text}</p>
@@ -237,11 +109,10 @@ export default function ChatInterface() {
             )}
           </div>
         ))}
-
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
+      {/* Input */}
       <div className="border-t border-zinc-800 px-6 py-4">
         <div className="flex gap-3">
           <input
