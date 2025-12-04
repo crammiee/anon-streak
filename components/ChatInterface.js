@@ -10,6 +10,7 @@ import { sendMessageWithOptimism } from "@/lib/sendMessageWithOptimism";
 import { leaveChat } from "@/lib/leaveChat";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import TypingIndicator from "@/components/TypingIndicator";
+import MessageBubble from "@/components/MessageBubble";
 
 export default function ChatInterface() {
   const router = useRouter();
@@ -89,29 +90,11 @@ export default function ChatInterface() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
         {messages.map((message) => (
-          <div key={message.id}>
-            {message.isSystem ? (
-              <div className="flex justify-center">
-                <div className="px-4 py-2 text-xs text-zinc-500 bg-zinc-900 rounded-full">
-                  {message.text}
-                </div>
-              </div>
-            ) : (
-              <div className={`flex ${message.isOwn ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[70%] px-4 py-3 rounded-2xl ${
-                    message.isOwn
-                      ? "bg-blue-600 text-white rounded-br-sm"
-                      : "bg-zinc-800 text-zinc-100 rounded-bl-sm"
-                  }`}
-                >
-                  <p className="text-sm leading-relaxed">{message.text}</p>
-                </div>
-              </div>
-            )}
-          </div>
+          <MessageBubble key={message.id} message={message} />
         ))}
+
         <TypingIndicator isTyping={partnerTyping} />
+
         <div ref={messagesEndRef} />
       </div>
 
