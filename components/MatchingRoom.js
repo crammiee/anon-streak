@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { matchAndCreateSession, supabase } from '@/lib/utils';
+import { supabase } from '@/lib/utils';
 
 export default function MatchingRoom() {
   const router = useRouter();
@@ -11,39 +11,15 @@ export default function MatchingRoom() {
   const [searchTime, setSearchTime] = useState(0);
   const [userId, setUserId] = useState(null);
 
+  // Get userId from localStorage
   useEffect(() => {
-    // get userid from localStorage
     const storedUserId = localStorage.getItem('userId');
     if (!storedUserId) {
       router.push('/');
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUserId(storedUserId);
-
-    const cleanupSessions = async () => {
-      //clean up any old active chat sessions for this user
-      try {
-        const { data: activeSessions } = await supabase
-          .from('chat_sessions')
-          .select('*')
-          .eq('status', 'active')
-          .or(`user1_id.eq.${storedUserId},user2_id.eq.${storedUserId}`);
-        
-          if (activeSessions && activeSessions.length > 0) {
-            console.log('Cleaning up old active sessions for user:', activeSessions.length);
-
-            const sessionIds = activeSessions.map(session => session.id);
-            await supabase
-              .from('chat_sessions')
-              .update({ status: 'ended', ended_at: new Date().toISOString() })
-              .in('id', sessionIds);
-          }
-      } catch (error) {
-        console.error('Error cleaning up old sessions:', error);
-      }
-    };
-    cleanupSessions();
-
   }, [router]);
 
   // Animated dots effect
@@ -51,7 +27,6 @@ export default function MatchingRoom() {
     const interval = setInterval(() => {
       setDots(prev => (prev.length >= 3 ? '' : prev + '.'));
     }, 500);
-
     return () => clearInterval(interval);
   }, []);
 
@@ -60,75 +35,53 @@ export default function MatchingRoom() {
     const timer = setInterval(() => {
       setSearchTime(prev => prev + 1);
     }, 1000);
-
     return () => clearInterval(timer);
   }, []);
 
-  // matching logic: poll a transactional RPC that does match + create in the DB
+  // Realtime subscription: listen for new chat_sessions involving this user
   useEffect(() => {
     if (!userId) return;
 
-    let isActive = true;
-    let hasMatched = false;
-    let isRequestInFlight = false;
-    
-    // also try to match with others (polling as backup)
-    const attemptMatch = async () => {
-      if (hasMatched || !isActive || isRequestInFlight) return;
-
-      isRequestInFlight = true;
-
-      try {
-        console.log('Attempting transactional match for user:', userId);
-        const result = await matchAndCreateSession(userId);
-
-        console.log('Transactional match result:', result);
-
-        if (result && result.session_id && result.partner_id && isActive && !hasMatched) {
-          hasMatched = true;
-          setStatus('Match found! Setting up chat...');
-
-          localStorage.setItem('sessionId', result.session_id);
-          localStorage.setItem('partnerId', result.partner_id);
-
-          setTimeout(() => {
-            if (isActive) {
-              router.push('/chat');
-            }
-          }, 1000);
+    const channel = supabase
+      .channel(`session-listener-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_sessions',
+        },
+        (payload) => {
+          const session = payload.new;
+          if (session.user1_id === userId || session.user2_id === userId) {
+            const partnerId =
+              session.user1_id === userId ? session.user2_id : session.user1_id;
+            localStorage.setItem('sessionId', session.id);
+            localStorage.setItem('partnerId', partnerId);
+            setStatus('Match found! Setting up chat...');
+            router.push('/chat');
+          }
         }
-      } catch (error) {
-        console.error('Error during transactional match', error);
-      } finally {
-        isRequestInFlight = false;
-      }
-    };
-    
-    //poll every 2 seconds
-    const pollInterval = setInterval(attemptMatch, 2000);
-    //initial attempt
-    attemptMatch();
+      )
+      .subscribe();
 
     return () => {
-      isActive = false;
-      clearInterval(pollInterval);
+      supabase.removeChannel(channel);
     };
   }, [userId, router]);
 
+  // Cancel search
   const handleCancel = async () => {
     if (confirm('Are you sure you want to cancel the search?')) {
       try {
-        //remove user from waiting queue
         if (userId) {
           await supabase
             .from('waiting_queue')
             .delete()
             .eq('user_id', userId);
         }
-
-      //redirect to landing page
-      router.push('/');
-    } catch (error) {
+        router.push('/');
+      } catch (error) {
         console.error('Error cancelling search', error);
         router.push('/');
       }

@@ -2,53 +2,68 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { createAnonymousUser, joinWaitingQueue, checkRateLimit, recordAction, formatCooldown } from "@/lib/utils";
+import {
+  createAnonymousUser,
+  joinWaitingQueue,
+  checkRateLimit,
+  recordAction,
+  formatCooldown,
+  supabase, // make sure supabase is imported if you want heartbeat
+} from "@/lib/utils";
+
+// Heartbeat: keep user marked active
+function startHeartbeat(userId) {
+  const beat = async () => {
+    try {
+      await supabase.rpc("user_heartbeat", { p_user_id: userId });
+    } catch (e) {
+      console.error("heartbeat error", e);
+    }
+  };
+  beat(); // run immediately
+  const intervalId = setInterval(beat, 10000);
+  localStorage.setItem("heartbeatIntervalId", intervalId.toString());
+}
 
 export default function LandingPage() {
-    const router = useRouter();
-    const [isLoading, setIsLoading] = useState(false);
-    const [rateLimitError, setRateLimitError] = useState(null);
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(false);
+  const [rateLimitError, setRateLimitError] = useState(null);
 
-    const handleStartChatting = async () => {
-      // Check rate limit
-      const rateLimit = checkRateLimit('FIND_CHAT');
-      if (!rateLimit.allowed) {
-        setRateLimitError(`Please wait ${formatCooldown(rateLimit.remainingMs)} before searching again.`);
-        setTimeout(() => setRateLimitError(null), rateLimit.remainingMs);
-        return;
+  const handleStartChatting = async () => {
+    const rateLimit = checkRateLimit("FIND_CHAT");
+    if (!rateLimit.allowed) {
+      setRateLimitError(
+        `Please wait ${formatCooldown(rateLimit.remainingMs)} before searching again.`
+      );
+      setTimeout(() => setRateLimitError(null), rateLimit.remainingMs);
+      return;
+    }
+
+    setIsLoading(true);
+    setRateLimitError(null);
+
+    try {
+      let userId = localStorage.getItem("userId");
+
+      if (!userId) {
+        const user = await createAnonymousUser();
+        userId = user.id;
+        localStorage.setItem("userId", userId);
       }
 
-      setIsLoading(true);
-      setRateLimitError(null);
-      
-      try {
-        //check if user already exists in localStorage
-        let userId = localStorage.getItem("userId");
+      await joinWaitingQueue(userId);
+      startHeartbeat(userId);
 
-        //if not, create anonymous user
-        if (!userId) {
-          //create anonymous user
-          const user = await createAnonymousUser();
-          userId = user.id;
-          localStorage.setItem("userId", userId);
-        }
-        
-        //join waiting queue
-        await joinWaitingQueue(userId);
-
-        // Record action for rate limiting
-        recordAction('FIND_CHAT');
-
-        //redirect to waiting page
-        router.push('/matching');
-      
-      } catch (error) {
-        console.error("Error starting chat:", error);
-        alert("An error occurred while trying to start chatting. Please try again.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
+      recordAction("FIND_CHAT");
+      router.push("/matching");
+    } catch (error) {
+      console.error("Error starting chat:", error);
+      alert("An error occurred while trying to start chatting. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-zinc-950 text-white px-6">

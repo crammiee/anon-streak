@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   sendMessage,
   endChatSession,
@@ -12,242 +12,173 @@ import {
   recordAction,
   formatCooldown,
   supabase,
-} from '@/lib/utils';
+} from "@/lib/utils";
 
 export default function ChatInterface() {
   const router = useRouter();
-  const [messages, setMessages] = useState(() => [
+  const [messages, setMessages] = useState([
     {
-      id: 'system-1',
+      id: "system-1",
       text: "You're now connected with a stranger. Say hi!",
       isSystem: true,
       timestamp: new Date(),
     },
   ]);
-  const [inputMessage, setInputMessage] = useState('');
-  const [sessionId] = useState(() => localStorage.getItem('sessionId'));
-  const [userId] = useState(() => localStorage.getItem('userId'));
+  const [inputMessage, setInputMessage] = useState("");
+  const [sessionId] = useState(() => localStorage.getItem("sessionId"));
+  const [userId] = useState(() => localStorage.getItem("userId"));
   const [isReady, setIsReady] = useState(false);
   const [rateLimitError, setRateLimitError] = useState(null);
   const messagesEndRef = useRef(null);
 
-  //auto-scroll to bottom
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
+  // Auto-scroll
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // validate session on mount
+  // Validate session
   useEffect(() => {
-    const storedSessionId = sessionId;
-    const storedUserId = userId;
-    const storedPartnerId = localStorage.getItem('partnerId');
-
-    console.log('Retrieved from localStorage:', {
-      sessionId: storedSessionId,
-      userId: storedUserId,
-      partnerId: storedPartnerId,
-    });
-
-    if (!storedSessionId || !storedUserId) {
-      console.log('Missing sessionId or userId in localStorage, redirecting to home.');
-      router.push('/');
-      return;
+    if (!sessionId || !userId) {
+      router.push("/");
     }
   }, [router, sessionId, userId]);
 
-  // load existing messages from database
+  // Heartbeat
+  useEffect(() => {
+    if (!userId) return;
+    const beat = async () => {
+      try {
+        await supabase.rpc("user_heartbeat", { p_user_id: userId });
+      } catch (e) {
+        console.error("heartbeat error", e);
+      }
+    };
+    beat();
+    const hb = setInterval(beat, 10000);
+    return () => clearInterval(hb);
+  }, [userId]);
+
+  // Load existing messages
   useEffect(() => {
     if (!sessionId || !userId) return;
-
     const loadMessages = async () => {
       try {
-        console.log('Loading existing messages for session:', sessionId);
-
         const data = await fetchMessagesForSession(sessionId);
-
-        if (data && data.length > 0) {
-          console.log('found data length:', data.length);
-
-          const formattedMessages = data.map(msg => ({
+        if (data?.length) {
+          const formatted = data.map((msg) => ({
             id: msg.id,
             text: msg.content,
             isOwn: msg.sender_id === userId,
             timestamp: new Date(msg.created_at),
           }));
-
-          setMessages(prev => {
-            //keep system messages at the top
-            const systemMessages = prev.filter(m => m.isSystem);
-            return [...systemMessages, ...formattedMessages];
+          setMessages((prev) => {
+            const systemMessages = prev.filter((m) => m.isSystem);
+            return [...systemMessages, ...formatted];
           });
         }
-
-        console.log('messages are loaded');
         setIsReady(true);
       } catch (error) {
-        console.error('Error loading messages:', error);
-        setIsReady(true); //even on error, mark as ready to allow sending
+        console.error("Error loading messages:", error);
+        setIsReady(true);
       }
     };
-
     loadMessages();
   }, [sessionId, userId]);
 
-  //subscribe to new messages (real-time)
+  // Subscribe to new messages
   useEffect(() => {
-    if (!sessionId || !userId || !isReady) {
-      if (!isReady) {
-        console.log('Not ready yet, skipping message subscription.');
-      }
-      return;
-    }
-
-    console.log('Setting up message subscription for session:', sessionId);
-
+    if (!sessionId || !userId || !isReady) return;
     const channel = subscribeToSessionMessages(sessionId, (newMessage) => {
-      console.log('Received new message payload (utility):', newMessage);
-
-      //only add message if it's for this session and not from self
       if (newMessage.session_id === sessionId && newMessage.sender_id !== userId) {
-        console.log('Adding new message from partner:', newMessage);
-
-        setMessages(prev => [
+        setMessages((prev) => [
           ...prev,
           {
             id: newMessage.id,
             text: newMessage.content,
             isOwn: false,
             timestamp: new Date(newMessage.created_at),
-          }
+          },
         ]);
-      } else {
-        console.log('Ignoring message not for us or from self:', newMessage);
       }
     });
-
-    return () => {
-      console.log('Unsubscribing from messages for session:', sessionId);
-      supabase.removeChannel(channel);
-    };
+    return () => supabase.removeChannel(channel);
   }, [sessionId, userId, isReady]);
 
-  // listen for session end (partner leaving chat)
+  // Subscribe to session status
   useEffect(() => {
-    if (!sessionId) {
-      console.log('Missing sessionId, cannot subscribe to session status.');
-      return;
-    }
-
-    console.log('Setting up session status subscription for session:', sessionId);
-
-    const statusChannel = subscribeToSessionStatus(sessionId, (updated) => {
-      console.log('Received session update payload (utility):', updated);
-
-      if (updated.status === 'ended') {
-        console.log('Session ended, notifying user and returning to landing.');
-
-        setMessages(prev => [
+    if (!sessionId) return;
+    const statusChannel = subscribeToSessionStatus(sessionId, async (updated) => {
+      if (updated.status === "ended") {
+        setMessages((prev) => [
           ...prev,
           {
             id: `system-ended-${Date.now()}`,
-            text: 'The other person has left the chat.',
+            text: "The other person has left the chat.",
             isSystem: true,
             timestamp: new Date(),
           },
         ]);
-
-        // Clear session data and redirect after a short delay
-        localStorage.removeItem('sessionId');
-        localStorage.removeItem('partnerId');
-
-        setTimeout(() => {
-          router.push('/');
-        }, 1500);
+        localStorage.removeItem("sessionId");
+        localStorage.removeItem("partnerId");
+        // Ensure session is marked ended
+        try {
+          await endChatSession(sessionId);
+        } catch (e) {
+          console.error("Error ending session:", e);
+        }
+        setTimeout(() => router.push("/"), 1500);
       }
     });
-
-    return () => {
-      console.log('Unsubscribing from session status for session:', sessionId);
-      supabase.removeChannel(statusChannel);
-    };
+    return () => supabase.removeChannel(statusChannel);
   }, [sessionId, router]);
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || !sessionId || !userId) return;
-
     const messageText = inputMessage;
-    setInputMessage('');
-
-    //optimistic add message to ui
+    setInputMessage("");
     const tempId = `temp-${Date.now()}`;
-    const optimisticMessage = {
-      id: tempId,
-      text: messageText,
-      isOwn: true,
-      timestamp: new Date(),
-    };
-
-    setMessages(prev => [...prev, optimisticMessage]);
-
+    setMessages((prev) => [
+      ...prev,
+      { id: tempId, text: messageText, isOwn: true, timestamp: new Date() },
+    ]);
     try {
-      //send message to backend
-      const sentMessage = await sendMessage(sessionId, userId, messageText)
-
-      //replace optimistic message id with real id
-      setMessages(prev =>
-        prev.map(msg =>
-          msg.id === tempId
-          ? { ...msg, id: sentMessage.id }
-          : msg
-        )
+      const sentMessage = await sendMessage(sessionId, userId, messageText);
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === tempId ? { ...msg, id: sentMessage.id } : msg))
       );
     } catch (error) {
-      console.error('Error sending message:', error);
-      alert('Failed to send message. Please try again.');
-
-      //remove failed optimistic message
-      setMessages(prev => prev.filter(msg => msg.id !== tempId));
+      console.error("Error sending message:", error);
+      alert("Failed to send message. Please try again.");
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     }
   };
 
   const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
     }
   };
 
   const handleLeaveChat = async () => {
-    // Check rate limit
-    const rateLimit = checkRateLimit('LEAVE_CHAT');
+    const rateLimit = checkRateLimit("LEAVE_CHAT");
     if (!rateLimit.allowed) {
-      setRateLimitError(`Please wait ${formatCooldown(rateLimit.remainingMs)} before leaving again.`);
+      setRateLimitError(
+        `Please wait ${formatCooldown(rateLimit.remainingMs)} before leaving again.`
+      );
       setTimeout(() => setRateLimitError(null), rateLimit.remainingMs);
       return;
     }
-
-    if (confirm('Are you sure you want to leave this chat?')) {
+    if (confirm("Are you sure you want to leave this chat?")) {
       try {
-        if (sessionId) {
-          await endChatSession(sessionId);
-        }
-
-        // Record action for rate limiting
-        recordAction('LEAVE_CHAT');
-
-        //clear session data
-        localStorage.removeItem('sessionId');
-        localStorage.removeItem('partnerId');
-
-        //navigate to landing
-        router.push('/');
+        if (sessionId) await endChatSession(sessionId);
+        recordAction("LEAVE_CHAT");
+        localStorage.removeItem("sessionId");
+        localStorage.removeItem("partnerId");
+        router.push("/");
       } catch (error) {
-        console.error('Error leaving chat session:', error);
-        router.push('/');
+        console.error("Error leaving chat:", error);
+        router.push("/");
       }
     }
   };
