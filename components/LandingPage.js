@@ -9,6 +9,7 @@ import {
   recordAction,
   formatCooldown,
 } from "@/lib/utils";
+import { getLocalStorageValue, setLocalStorageValue } from "@/lib/storage";
 
 export default function LandingPage() {
   const router = useRouter();
@@ -29,11 +30,11 @@ export default function LandingPage() {
     setRateLimitError(null);
 
     try {
-      let userId = localStorage.getItem("userId");
+      let userId = getLocalStorageValue("userId");
       if (!userId) {
         const user = await createAnonymousUser();
         userId = user.id;
-        localStorage.setItem("userId", userId);
+        setLocalStorageValue("userId", userId);
       }
 
       await joinWaitingQueue(userId);

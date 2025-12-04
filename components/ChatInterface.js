@@ -11,6 +11,7 @@ import { leaveChat } from "@/lib/leaveChat";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import TypingIndicator from "@/components/TypingIndicator";
 import MessageBubble from "@/components/MessageBubble";
+import { useLocalStorageValue } from "@/hooks/useLocalStorageValue";
 
 export default function ChatInterface() {
   const router = useRouter();
@@ -23,8 +24,8 @@ export default function ChatInterface() {
     },
   ]);
   const [inputMessage, setInputMessage] = useState("");
-  const [sessionId] = useState(() => localStorage.getItem("sessionId"));
-  const [userId] = useState(() => localStorage.getItem("userId"));
+  const [sessionId] = useLocalStorageValue("sessionId");
+  const [userId] = useLocalStorageValue("userId");
   const [isReady, setIsReady] = useState(false);
   const [rateLimitError, setRateLimitError] = useState(null);
   const messagesEndRef = useRef(null);

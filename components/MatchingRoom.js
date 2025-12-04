@@ -7,6 +7,7 @@ import { matchAndCreateSession } from "@/lib/matchAndCreateSession";
 import Loader from "@/components/Loader";
 import StatusText from "@/components/StatusText";
 import TipsBox from "@/components/TipsBox";
+import { getLocalStorageValue, setLocalStorageValue } from "@/lib/storage";
 
 const searchPhrases = [
   "Searching for a friendly stranger",
@@ -37,7 +38,7 @@ export default function MatchingRoom() {
   const [status, setStatus] = useState(() => getRandomPhrase(searchPhrases));
 
   useEffect(() => {
-    const storedUserId = localStorage.getItem("userId");
+    const storedUserId = getLocalStorageValue("userId");
     if (!storedUserId) {
       router.push("/");
       return;
@@ -53,8 +54,8 @@ export default function MatchingRoom() {
       const result = await matchAndCreateSession(userId);
       if (result) {
         const partnerId = result.partner_id;
-        localStorage.setItem("sessionId", result.session_id);
-        localStorage.setItem("partnerId", partnerId);
+        setLocalStorageValue("sessionId", result.session_id);
+        setLocalStorageValue("partnerId", partnerId);
 
         //show feedback first
         setStatus(getRandomPhrase(matchedPhrases));
@@ -94,8 +95,8 @@ export default function MatchingRoom() {
         if (session.user1_id === userId || session.user2_id === userId) {
           const partnerId =
             session.user1_id === userId ? session.user2_id : session.user1_id;
-          localStorage.setItem("sessionId", session.id);
-          localStorage.setItem("partnerId", partnerId);
+          setLocalStorageValue("sessionId", session.id);
+          setLocalStorageValue("partnerId", partnerId);
 
           //show feedback first
           setStatus(getRandomPhrase(matchedPhrases));
