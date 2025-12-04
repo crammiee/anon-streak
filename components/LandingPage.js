@@ -2,15 +2,25 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { createAnonymousUser, joinWaitingQueue } from "@/lib/utils";
+import { createAnonymousUser, joinWaitingQueue, checkRateLimit, recordAction, formatCooldown } from "@/lib/utils";
 
 export default function LandingPage() {
     const router = useRouter();
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [isLoading, setIsLoading] = useState(false);
+    const [rateLimitError, setRateLimitError] = useState(null);
 
     const handleStartChatting = async () => {
-      setIsLoading(true); 
+      // Check rate limit
+      const rateLimit = checkRateLimit('FIND_CHAT');
+      if (!rateLimit.allowed) {
+        setRateLimitError(`Please wait ${formatCooldown(rateLimit.remainingMs)} before searching again.`);
+        setTimeout(() => setRateLimitError(null), rateLimit.remainingMs);
+        return;
+      }
+
+      setIsLoading(true);
+      setRateLimitError(null);
+      
       try {
         //check if user already exists in localStorage
         let userId = localStorage.getItem("userId");
@@ -25,6 +35,9 @@ export default function LandingPage() {
         
         //join waiting queue
         await joinWaitingQueue(userId);
+
+        // Record action for rate limiting
+        recordAction('FIND_CHAT');
 
         //redirect to waiting page
         router.push('/matching');
@@ -71,10 +84,17 @@ export default function LandingPage() {
       <div className="w-full max-w-md space-y-4">
         <button
           onClick={handleStartChatting}
-          className="w-full py-4 bg-blue-600 hover:bg-blue-700 rounded-xl font-semibold text-lg transition-all transform hover:scale-105 active:scale-95 shadow-lg shadow-blue-600/30"
+          disabled={isLoading || rateLimitError}
+          className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:cursor-not-allowed rounded-xl font-semibold text-lg transition-all transform hover:scale-105 active:scale-95 shadow-lg shadow-blue-600/30"
         >
-          Start Chatting Anonymously
+          {isLoading ? 'Connecting...' : 'Start Chatting Anonymously'}
         </button>
+
+        {rateLimitError && (
+          <div className="text-center text-sm text-red-400 bg-red-950/30 border border-red-800 rounded-lg px-4 py-2">
+            {rateLimitError}
+          </div>
+        )}
 
         <div className="text-center text-sm text-zinc-500">
           No signup required • Completely anonymous

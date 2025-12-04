@@ -8,6 +8,9 @@ import {
   fetchMessagesForSession,
   subscribeToSessionMessages,
   subscribeToSessionStatus,
+  checkRateLimit,
+  recordAction,
+  formatCooldown,
   supabase,
 } from '@/lib/utils';
 
@@ -25,6 +28,7 @@ export default function ChatInterface() {
   const [sessionId] = useState(() => localStorage.getItem('sessionId'));
   const [userId] = useState(() => localStorage.getItem('userId'));
   const [isReady, setIsReady] = useState(false);
+  const [rateLimitError, setRateLimitError] = useState(null);
   const messagesEndRef = useRef(null);
 
   //auto-scroll to bottom
@@ -218,11 +222,22 @@ export default function ChatInterface() {
   };
 
   const handleLeaveChat = async () => {
+    // Check rate limit
+    const rateLimit = checkRateLimit('LEAVE_CHAT');
+    if (!rateLimit.allowed) {
+      setRateLimitError(`Please wait ${formatCooldown(rateLimit.remainingMs)} before leaving again.`);
+      setTimeout(() => setRateLimitError(null), rateLimit.remainingMs);
+      return;
+    }
+
     if (confirm('Are you sure you want to leave this chat?')) {
       try {
         if (sessionId) {
           await endChatSession(sessionId);
         }
+
+        // Record action for rate limiting
+        recordAction('LEAVE_CHAT');
 
         //clear session data
         localStorage.removeItem('sessionId');
@@ -240,18 +255,28 @@ export default function ChatInterface() {
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-white">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
-        <div className="flex items-center gap-3">
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-          <span className="text-sm text-zinc-400">Connected with Stranger</span>
+      <div className="border-b border-zinc-800">
+        <div className="flex items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span className="text-sm text-zinc-400">Connected with Stranger</span>
+          </div>
+          
+          <button
+            onClick={handleLeaveChat}
+            disabled={!!rateLimitError}
+            className="px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 disabled:text-zinc-600 disabled:cursor-not-allowed rounded-lg transition-colors"
+          >
+            Leave Chat
+          </button>
         </div>
-        
-        <button
-          onClick={handleLeaveChat}
-          className="px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 rounded-lg transition-colors"
-        >
-          Leave Chat
-        </button>
+        {rateLimitError && (
+          <div className="px-6 pb-3">
+            <div className="text-xs text-red-400 bg-red-950/30 border border-red-800 rounded-lg px-3 py-2 text-center">
+              {rateLimitError}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Messages Container */}
