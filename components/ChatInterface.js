@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/utils";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { useLoadMessages } from "@/hooks/useLoadMessages";
 import { useMessageSubscription } from "@/hooks/useMessageSubscription";
