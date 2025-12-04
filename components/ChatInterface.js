@@ -8,6 +8,8 @@ import { useMessageSubscription } from "@/hooks/useMessageSubscription";
 import { useSessionStatus } from "@/hooks/useSessionStatus";
 import { sendMessageWithOptimism } from "@/lib/sendMessageWithOptimism";
 import { leaveChat } from "@/lib/leaveChat";
+import { useTypingIndicator } from "@/hooks/useTypingIndicator";
+import TypingIndicator from "@/components/TypingIndicator";
 
 export default function ChatInterface() {
   const router = useRouter();
@@ -25,6 +27,7 @@ export default function ChatInterface() {
   const [isReady, setIsReady] = useState(false);
   const [rateLimitError, setRateLimitError] = useState(null);
   const messagesEndRef = useRef(null);
+  const { partnerTyping, handleTyping } = useTypingIndicator(sessionId, userId);
 
   // Auto-scroll
   useEffect(() => {
@@ -108,6 +111,7 @@ export default function ChatInterface() {
             )}
           </div>
         ))}
+        <TypingIndicator isTyping={partnerTyping} />
         <div ref={messagesEndRef} />
       </div>
 
@@ -117,7 +121,7 @@ export default function ChatInterface() {
           <input
             type="text"
             value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
+            onChange={(e) => { setInputMessage(e.target.value); handleTyping(e.target.value); }}
             onKeyPress={handleKeyPress}
             placeholder="Type a message..."
             className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"

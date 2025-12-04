@@ -13,13 +13,17 @@ export function useTypingIndicator(sessionId, userId) {
     const channel = supabase.channel(`typing-${sessionId}`);
 
     channel
-      .on("broadcast", { event: "typing" }, (payload) => {
+      .on("broadcast", { event: "typing" }, ({ payload }) => {
+
+        //debug logging
+        console.log("Received typing event:", payload);
+
         if (payload.user_id !== userId) {
           setPartnerTyping(payload.isTyping);
         }
-      })
-      .subscribe();
+      });
 
+    channel.subscribe();
     channelRef.current = channel;
 
     return () => {
