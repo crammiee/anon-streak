@@ -8,12 +8,33 @@ import Loader from "@/components/Loader";
 import StatusText from "@/components/StatusText";
 import TipsBox from "@/components/TipsBox";
 
+const searchPhrases = [
+  "Searching for a friendly stranger",
+  "Connecting you with someone new",
+  "Finding the perfect chat partner",
+  "Looking for a fellow anonymous chatter",
+  "Matching you with a random user",
+];
+
+const matchedPhrases = [
+  "Match found! Setting up chat",
+  "It's a match! You're about to meet someone new",
+  "Found a match! Get ready to chat with a stranger",
+  "Connection established! Preparing chat",
+  "Yeah! A new chat partner is on the way",
+];
+
 export default function MatchingRoom() {
   const router = useRouter();
   const [dots, setDots] = useState("");
-  const [status, setStatus] = useState("Looking for someone to chat with");
   const [searchTime, setSearchTime] = useState(0);
   const [userId, setUserId] = useState(null);
+  
+  //helper to pick random phrase
+  const getRandomPhrase = (phrases) =>
+    phrases[Math.floor(Math.random() * phrases.length)];
+  
+  const [status, setStatus] = useState(() => getRandomPhrase(searchPhrases));
 
   useEffect(() => {
     const storedUserId = localStorage.getItem("userId");
@@ -34,7 +55,12 @@ export default function MatchingRoom() {
         const partnerId = result.partner_id;
         localStorage.setItem("sessionId", result.session_id);
         localStorage.setItem("partnerId", partnerId);
-        router.push("/chat");
+
+        //show feedback first
+        setStatus(getRandomPhrase(matchedPhrases));
+        setTimeout(() => {
+          router.push("/chat");
+        }, 2000);
       }
     };
     attemptMatch();
@@ -70,8 +96,12 @@ export default function MatchingRoom() {
             session.user1_id === userId ? session.user2_id : session.user1_id;
           localStorage.setItem("sessionId", session.id);
           localStorage.setItem("partnerId", partnerId);
-          setStatus("Match found! Setting up chat...");
-          router.push("/chat");
+
+          //show feedback first
+          setStatus(getRandomPhrase(matchedPhrases));
+          setTimeout(() => {
+            router.push("/chat");
+          }, 2000);
         }
       })
       .subscribe();
